@@ -1,0 +1,783 @@
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge,chrome=1,firefox=1'>
+    <title>'Mouse-Based CBM (PoC)'</title>
+    <meta name='description' content=''>
+    <meta name='viewport' content='width=device-width'>
+    <script type='text/javascript' src='http://ajax.googleapis.com/ajax/libs/jquery/2.1.0/jquery.min.js'></script>
+    <script src='https://d3js.org/d3.v5.min.js'></script>
+</head>
+<!--
+        For the sake of legibility, variable names in comments are surrounded with backticks, e.g., `varOne`.
+
+        Author: Samuel Campbell (sam.campbell@monash.edu)
+    -->
+
+<body>
+    <div id='cbmDisplay'></div>
+    <script>
+        function randomIntFromInterval(min, max) { // min and max included
+            return Math.floor(Math.random() * (max - min + 1) + min);
+        }
+       
+        function setOrder(binRange, binProp) {
+            /*
+                Iterates through the potential stimulus types, where 0 is neutral and 1 is non-neutral. For each,
+                loops over `orientIter`, which decriments from 1 to 0, taking the absolute value of `stimType` subtracted from `orientIter`,
+                resulting in `stimOrient` being 0 (for landscape) or 1 (for portrait). This is then appended to `orientations`.
+               
+                Returns a list of lists of the form, [`stimulus type`, `stimulus orientation`, `image url`].
+
+                Written this way to allow for expansion later down the line.
+            */
+            var bins = [binRange * binProp, binRange - (binRange * binProp)];
+
+            //console.log("bins");//***
+            //console.log(bins);//***
+
+            var orientations = [];
+
+            // `stimType` is the type of the stimulus: neutral (0) or non-neutral (1)
+            for (var stimType = 0; stimType < 2; stimType++) {
+                for (var orientIter = 1; orientIter > -1; orientIter--) {
+                    // `stimOrient` is the orientation of the stimulus: landscape (0) or portrait (1)
+                    var stimOrient = Math.abs(orientIter - stimType);
+
+                    for (var dummyIter = 0; dummyIter < bins[orientIter]; dummyIter++) {
+                        orientations = [...orientations,
+                            {
+                                'stimType': stimType,
+                                'stimOrient': stimOrient,
+                                'stimUrl': null
+                            }
+                        ]; //'none']];
+
+                        //console.log(orientations);//***
+                    }
+                }
+            }
+
+            //console.log("orientations");//***
+            //console.log(orientations.length);//***
+            return orientations;
+        }
+
+        function randomiseOrder(unshuffledArray) {
+            /*
+                Shuffles an returns an array passed as an argument.
+
+                Used to populate `orderedOrientations` and `orderedImages` with a random permutation of `orientations` and `images`, respectively.
+
+                Takes a random index of the unshuffled array n times (where n is the number of objects in the array) and
+                appends the tuple at that index of `unshuffledArray` to `shuffledArray`.
+            */
+            // Instantiated here, as the length of `orientations` will change
+            var maxIter = unshuffledArray.length;
+
+            var shuffledArray = [];
+
+            for (var i = 0; i < maxIter; i++) {
+                // `rand` is an integer between 0 and the original length of `orientations`, minus 1
+                rand = Math.floor(Math.random() * unshuffledArray.length);
+
+                shuffledArray[i] = unshuffledArray[rand];
+
+                // Reinstantiate `orientations` as itself, sans the tuple at index `rand`
+                unshuffledArray = [...unshuffledArray.slice(0, rand), ...unshuffledArray.slice(rand + 1, unshuffledArray.length)];
+            }
+
+            return shuffledArray;
+        }
+       
+        function preloadImages() {
+            imgVec = [];
+            for (var i = 0; i < arguments.length; i++) {
+                imgVec[i] = new Image();
+                imgVec[i].src = arguments[i];
+            }
+           
+            return imgVec;
+        }
+
+        function assignDims(stimIndx, adj = 0.5) { // 0=horizontal, 1=vertical
+            imgWidth = [windowWidth, windowHeight][stimIndx] * adj;
+            imgHeight = [windowHeight, windowWidth * 0.75][stimIndx] * adj;
+            rectWidth = imgWidth; // - 10;
+            rectHeight = imgHeight; // - 10;
+            imgX = (windowWidth / 2) - (imgWidth * 0.5);
+            imgY = (windowHeight / 2) - (imgHeight * 0.5);
+            rectX = imgX; // - 10;
+            rectY = imgY; // - 10;
+        }
+
+        function drawSvg() {
+            /*
+                Appends SVG 'panel' to the div, with dimensions relative to those of the screen.
+            */
+            panel = d3.select('#cbmDisplay')
+                .append('svg')
+                .attr('id', 'panel')
+                .attr('width', windowWidth)
+                .attr('height', windowHeight)
+                .style('margin-left', marginLeft + 'px')
+                .style('margin-top', marginTop + 'px');
+            //.style('background-color', 'grey');//***
+        }
+       
+        function getPreambleText() {
+            /*
+                Returns text appropriate to the current value of `preambleIndex`.
+                In other words, gets the right instructions ready to the display to the user during the preamble.
+            */
+            // Sets the per-orientation movement instructions, based on `condition`
+            if (condition === 1) {
+                var landscapeText = "BACKWARD";
+                var portraitText = "FORWARD";
+            } else {
+                var landscapeText = "FORWARD";
+                var portraitText = "BACKWARD";
+            }
+            // Returns the right instruction strings for each of the preamble 'pages', appending movement instructions as necessary
+            switch (preambleIndx) {
+                case 0: // The initial screen
+                    return "In the following task, you will be presented with images in either landscape or portrait format. Your task is to move the MOUSE " + landscapeText + " if you see an image in LANDSCAPE format and " + portraitText + " if you see an image in PORTRAIT format. When you move the mouse FORWARD, the image will ENLARGE. When you move the mouse BACKWARD, the image will SHRINK.";
+                case 1: // The screen instructing users what to do upon completing a response
+                    return "When you have completed a correct response, a green " + targetCorrect + " will appear. You will need to click on it to proceed. If you make a mistake, a red " + targetIncorrect + " will appear. You will need to click on it and respond again.";
+                case 2: // The screen instructing users how to respond to landscape frames/image borders
+                    return "When the frame looks like this, move the mouse " + landscapeText + " until the cursor reaches the edge of the screen. Please respond as quickly and accurately as you can.";
+                case 3: // The screen instructing users how to respond to portrait frames/image borders
+                    return "When the frame looks like this, move the mouse " + portraitText + " until the cursor reaches the edge of the screen. Please respond as quickly and accurately as you can.";
+                case 4: // The screen immediately preceding the practice trials
+                    return "You will now practice a few presentations.";
+                case 14: // The screen immediately preceding the actual trials
+                    return "Great job! We'll move on to the training proper when you're ready. If you feel distressed at any point, please don't hesitate to stop.";
+            }
+        }
+       
+        function instruct(instruction, instructionText=null, x=windowWidth/2, y=windowHeight/2) {//***
+            textItr = 0;
+            if (instructionText != null) {
+                var instructionTextArray = instructionText.split(/\s+/);
+                var textIter = 0;
+                var text = "";
+                for (i=0, l=instructionTextArray.length; i<l; i++) {
+                    text = text + instructionTextArray[i] + " ";
+
+                    if (text.length > 50 || i == l-1) {
+                        panel.append("text")
+                            .attr('class', 'preambleText')
+                            .text(text)
+                            .style("font-family", "sans-serif")
+                            .attr("text-anchor", "middle")
+                            .style("font-size", "1vw")
+                            .style("fill", "black")
+                            .attr("x", x)
+                            .attr("y", y + (20 * textItr));
+                            //.attr("dy", y + (16 * textItr));
+
+                        textItr++;
+                        text = "";
+                    }
+                }
+            }
+
+            panel.append("text")
+                .attr('class', 'preambleText')
+                .text(instruction)
+                .style("font-family", "sans-serif")
+                .attr("text-anchor", "middle")
+                .style("font-size", "1vw")
+                .style("fill", "black")
+                .attr("x", x)
+                .attr("y", y + (25 * textItr));
+                //.attr("dy", y + (16 * textItr));
+        }
+
+        function drawFigure(preamble = false) {
+            /*
+                Writes a framed image to the SVG `panel`.
+            */
+            if (!preamble) {
+                panel.append('image')
+                    .attr('class', 'pres')
+                    .attr('id', 'image')
+                    .attr('xlink:href', imgList[imgIndx].stimUrl)
+                    .attr('x', imgX)
+                    .attr('y', imgY)
+                    .attr('width', imgWidth)
+                    .attr('height', imgHeight);
+
+                panel.append('text')
+                    .text(imgText[imgIndx])
+                    .attr('class', 'presText')
+                    .attr('x', (imgX + imgWidth / 2))
+                    .attr('y', (imgY + imgHeight / 2))
+                    .style('fill', 'black')
+                    .style('font-size', fontSize + 'px')
+                    .style('text-anchor', 'middle');
+            }
+
+            panel.append('rect')
+                .attr('class', 'pres')
+                .attr('x', rectX)
+                .attr('y', rectY)
+                .attr('width', rectWidth)
+                .attr('height', rectHeight)
+                .style('fill', 'none')
+                .style('stroke', 'black')
+                .style('stroke-width', borderThickness + 'px');
+        }
+
+        function handler(e) {
+            /*
+                Mouse movement handler.
+                * Maps the framed images' size to the position of the (hidden) cursor.
+                * Tracks the completion of a full extension of the mouse during each trial presentation.
+            */
+
+            e = e || window.event;
+
+            var pageX = e.pageX;
+            var pageY = e.pageY;
+
+            // IE 8
+            if (pageX === undefined) {
+                pageX = e.clientX + document.body.scrollLeft + document.documentElement.scrollLeft;
+                pageY = e.clientY + document.body.scrollTop + document.documentElement.scrollTop;
+            }
+
+            if (document.body.style.cursor == 'none') {
+                adjustObjects(pageX, pageY);
+
+                if ((pageY < marginTop && imgList[imgIndx].stimOrient === [1,0][condition-1] /*[landscape pulled, portrait pulled]*/ ) ||
+                    (pageY > marginTop + windowHeight && imgList[imgIndx].stimOrient === [0,1][condition-1] /*[portrait pushed, landscape pushed]*/ )) { // Full 'extension' and correct
+                    document.body.style.cursor = 'default';
+                    $('.pres').hide();
+                    $('.presText').hide();
+                    drawTarget(targetCorrect, true);
+                } else if (pageY < marginTop || pageY > marginTop + windowHeight) { // Full 'extension' and incorrect
+                    document.body.style.cursor = 'default';
+                    $('.pres').hide();
+                    $('.presText').hide();
+                    drawTarget(targetIncorrect, false);
+                }
+            }
+        }
+
+        function adjustObjects(pageX, pageY) {
+            /*
+                Scales the framed images according to mouse position (passed as `pageX` and `pageY`).
+            */
+            assignDims(imgList[imgIndx].stimOrient);
+
+            var scale = (pageY / windowHeight) * 2;
+
+            d3.selectAll('.pres')
+                .attr('width', imgWidth * scale)
+                .attr('height', imgHeight * scale)
+                .attr('x', (windowWidth / 2) - (imgWidth * scale * 0.5))
+                .attr('y', (windowHeight / 2) - (imgHeight * scale * 0.5));
+
+            d3.selectAll('.presText')
+                .style('font-size', (fontSize * scale) + 'px');
+
+            d3.selectAll('#image')
+                .attr('xlink:href', imgList[imgIndx].stimUrl);
+        }
+
+        function drawTarget(target = 'Click Here', correct) {
+            /*
+                Writes text to `panel` (upon completion of a full extension during a trial presentation).
+            */
+            var targetCol,
+                targetSize,
+                targetOffset;
+            
+            if (correct) {
+                targetCol = 'green';
+                targetSize = windowWidth / 15;
+                targetOffset = 0.5;
+            } else {
+                targetCol = 'red';
+                targetSize = windowWidth / 7.5;
+                targetOffset = 0.6;
+            }
+
+            panel.append('text')
+                .text(target)// + ' Click Here.')
+                .attr('id', 'target')
+                .attr('x', (imgX + imgWidth / 2))
+                .attr('y', (imgY + imgHeight * targetOffset))
+                .style('fill', targetCol)
+                .style('font-size', targetSize + 'px')//'50px')
+                .style('text-anchor', 'middle')
+                .on('click', function(e) {
+                    if (imgIndx === imgList.length - 1) {
+                        $('#target').remove();
+                        endScreen();
+                    } else {
+                        document.body.style.cursor = 'none';
+                        if (correct) {
+                            imgIndx++; // next pres
+                        };
+                        handler(e);
+                        $('.pres').show();
+                        d3.select('.presText')
+                            .text(imgText[imgIndx]);
+                        $('.presText').show();
+                        if (imgList[imgIndx].stimUrl !== 'none') {
+                            $('#image').show();
+                        };
+                        $('#target').remove();
+                    };
+                });
+        }
+
+        function endScreen() {
+            panel.append('text')
+                .text(endMessage)
+                .attr('x', (imgX + imgWidth / 2))
+                .attr('y', (imgY + imgHeight / 2))
+                .style('fill', 'black')
+                .style('font-size', '25px')
+                .style('text-anchor', 'middle');
+            
+            completedCBM = true;
+        }
+
+        // Assign initial variables (image and frame dimensions are instantiated as horizontally-oriented)
+        
+        var condition = prompt("Which condition? 1 = Experimental, 2 = Control", '');//randomIntFromInterval(1,2));
+        
+        if (condition === '1') {
+            condition = 1;
+        } else if (condition === '2') {
+            condition = 2;
+        } else if (condition != 1 && condition != 2) { // invalid input > rand
+            condition = randomIntFromInterval(1,2);
+           
+            alert("Your input was invalid. You have been assigned at random to the " + ['experimental', 'control'][condition-1] + " condition.");
+        }
+        
+        var binRange = 8,
+            binProp = 0.875,//0.95,
+            propContent = 0.99,//*** not sure if coverage is all g
+            propWhitespace = ((1 - propContent) / 4),
+            windowWidth = $(window).width() * propContent,
+            windowHeight = $(window).height() * propContent,
+            marginLeft = (windowWidth / propContent) * propWhitespace,
+            marginTop = (windowHeight / propContent) * propWhitespace * 10,
+            fontSize = 100,
+            imgList = randomiseOrder(setOrder(binRange, binProp)),
+            imgNeutral = /*['https://cdnimg.webstaurantstore.com/images/products/extra_large/12689/310269.jpg'],*/preloadImages(
+                'https://imgur.com/oBsVbkR.png',
+                'https://imgur.com/0oT6D5f.png',
+                'https://imgur.com/OIkmlnf.png',
+                'https://imgur.com/WFg83up.png',
+                'https://imgur.com/ErNDthr.png',
+                'https://imgur.com/qX3BYji.png',
+                'https://imgur.com/8ZYpi5X.png',
+                'https://imgur.com/Vk3C3fr.png'
+            ),
+            imgNonNeutral = /*['https://cdnimg.webstaurantstore.com/images/products/extra_large/12689/310269.jpg'],*/preloadImages(
+                'https://imgur.com/8Iokn6o.png',
+                'https://imgur.com/FbwEVQl.png',
+                'https://imgur.com/X636Ror.png',
+                'https://imgur.com/PRftFMe.png',
+                'https://imgur.com/uTWMCpg.png',
+                'https://imgur.com/rbmxm99.png',
+                'https://imgur.com/Pohs1Lx.png',
+                'https://imgur.com/rKTjFRN.png'
+            ),
+            imgOrient = [0, 1], // 0=horizontal, 1=vertical //***
+            imgIndx = 0,
+            borderThickness = 10,
+            targetCorrect = '\u2713',
+            targetIncorrect = '\u2A2F',
+            alreadyFired = false,
+            completedCBM = false,
+            endMessage = "Congratulations, you have completed the task. Press any key to continue.";
+
+        console.log(imgList);//***
+        console.log(marginTop);
+        
+        while (imgNonNeutral.length < binRange) { //*** rm this and replace image lists with obvs full list of images
+            imgNeutral = [...imgNeutral, ...imgNeutral];
+            imgNonNeutral = [...imgNonNeutral, ...imgNonNeutral];
+        }
+
+        for (var i = 0, l = imgList.length; i < l; i++) {
+            if (imgList[i].stimType == 1) {
+                var t = imgNeutral[0];
+                imgNeutral = [...imgNeutral.slice(1, imgNeutral.length)];
+            } else {
+                var t = imgNonNeutral[0];
+                
+                console.log(t);//***
+                
+                imgNonNeutral = [...imgNonNeutral.slice(1, imgNonNeutral.length)]
+            }
+            
+            imgList[i].stimUrl = t.src;
+            //console.log(imgList);//***
+        }
+
+        // preamble stuff; adding to `imgList` //*** idiot, fix
+        var imgText = [
+                ['Pull','Push','Pull','Push','Push','Pull'], // experimental
+                ['Push','Pull','Push','Pull','Pull','Push'] // control
+            ][condition-1],
+            imgListPreamble = [{
+                    'stimType': 0,
+                    'stimOrient': 0,
+                    'stimUrl': null
+                },
+                {
+                    'stimType': 1,
+                    'stimOrient': 1,
+                    'stimUrl': null
+                },
+                {
+                    'stimType': 0,
+                    'stimOrient': 0,
+                    'stimUrl': null
+                },
+                {
+                    'stimType': 1,
+                    'stimOrient': 1,
+                    'stimUrl': null
+                },
+                {
+                    'stimType': 1,
+                    'stimOrient': 1,
+                    'stimUrl': null
+                },
+                {
+                    'stimType': 0,
+                    'stimOrient': 0,
+                    'stimUrl': null
+                }
+            ];
+        imgList = [...imgListPreamble, ...imgList];
+
+        //console.log(imgList);//***
+
+        // Randomly append appropriate values to the `img[...]` lists
+        //imgList = [...imgList, ...randomiseOrder(setOrder())];//***
+        //imgPath = randomiseOrder(imgPath);//***
+
+        //imgList = [...setOrder(binRange=5,prop=1), ...imgList]
+
+        console.log(imgList); //***
+
+        // Instantiate empty variables
+        var panel,
+            imgWidth,
+            imgHeight,
+            rectWidth,
+            rectHeight,
+            imgX,
+            imgY,
+            rectX,
+            rectY,
+            landscapeText,
+            portraitText,
+            landscapeText,
+            portraitText;
+
+        // Assign values to (most of the) empty variables
+        assignDims(imgList[imgIndx].stimOrient);
+
+        //console.log(rectY);//***
+
+        // Append SVG
+        drawSvg();
+
+        var preambleIndx = 0,
+            preambleDone = false,
+            preambleX = windowWidth/2,
+            preambleY = windowHeight/2;
+        
+        //*** here are the variables for anx stuff
+        function drawAnxSvg() {
+            panel = d3.select('#cbmDisplay')
+                .append('svg')
+                .attr('id', 'panel')
+                .attr('width', windowWidth)
+                .attr('height', windowHeight);
+                //.style('background', '#DBDBDB');
+        };
+        
+        function instructAnx(instruction, instructionText=null, col='black', x=windowWidth, y=windowHeight/3, textSpan=50) {//***        
+            var presTextX = x * 0.375,
+                instructTextX = x * 0.5,
+                instructTextY = windowHeight * 0.95,
+                tabLen = windowWidth * 0.02,
+                tabbed = false;
+            
+            textItr = 0;
+            if (instructionText != null) {
+                var instructionTextArray = instructionText.split(/\s+/);
+                var textIter = 0;
+                var text = '';
+                for (i=0, l=instructionTextArray.length; i<l; i++) {
+                    if (instructionTextArray[i] != '*NEWLINE*') { //*** need to fix up so '*NEWLINE*' immediately following a 50-char string doesn't create another newline
+                        text = text + instructionTextArray[i] + ' ';   
+                    }
+                    
+                    if (text.length > textSpan || i == l-1 || instructionTextArray[i] == '*NEWLINE*') {
+                        panel.append('text')
+                            .attr('class', 'presText')
+                            .text(text)
+                            .style('font-family', 'sans-serif')
+                            .attr('text-anchor', 'middle')
+                            .style('font-size', '1vw')
+                            .style('fill', 'black')
+                            .attr('x', presTextX + tabbed * tabLen)
+                            .attr('y', y + (20 * textItr));
+                            //.attr('dy', y + (16 * textItr));
+                        textItr++;
+                        text = '';
+                    };
+                };
+            };
+            
+            panel.append('text')
+                .attr('class', 'presText presInstruct')
+                .text(instruction)
+                .style('font-family', 'sans-serif')
+                .attr('text-anchor', 'middle')
+                .style('font-size', '1vw')
+                .style('fill', col)
+                .attr('x', instructTextX)
+                .attr('y', instructTextY);
+                //.attr('dy', y + (16 * textItr));
+        };
+                
+        var panel;
+        
+        var windowWidth = $(window).width() * 0.98,
+            windowHeight = $(window).height() * 0.98,
+            indx = 0,
+            preamble = [
+                {
+                    'text': "THIS IS A DEMO OF THE BRAIN TRAINING TASK. *NEWLINE* It is shorter in length but will give you a taste of the program components. *NEWLINE* *NEWLINE* In the following task, you will be asked to read a set of scenarios which are three lines in length. They will be presented on the screen one-by-one, by pressing the spacebar. While reading, try to envisage yourself in the situation described, even if the situation is unlikely to happen to you.",
+                    'instruction': "Press the spacebar to continue."
+                },
+                {
+                    'text': "The final sentence of each scenario will contain a missing word. *NEWLINE* *NEWLINE* If you press the space bar, this word will appear, but in incomplete form (for example: w_r_ is the fragment for ‘word’  both the 'o' and the 'd' are missing). *NEWLINE* *NEWLINE* Your task is to finish the word fragment correctly using the scenario you just read: *NEWLINE* \u0009\u2022 If you know what the full word should be, then press the spacebar as quickly as possible *NEWLINE* \u2022 then type in the FIRST missing letter on your keyboard.",
+                    'instruction': "Press the spacebar to continue."
+                },
+                {
+                    'text': "If you have entered the correct letter, the complete word will appear on the screen. *NEWLINE* *NEWLINE* You will then be asked a question that measures your understanding of the story. Please answer the question by typing ‘Y’ for yes and ‘N’ for no on the keyboard.",
+                    'instruction': "Press the spacebar to continue."
+                },
+                {
+                    'text': "This is the real task. *NEWLINE* *NEWLINE* You will be presented with 6 scenarios. Each scenario contains a missing word. *NEWLINE* *NEWLINE* Just like you did in the practice: *NEWLINE* \u0009\u2022 If you know what the full word should be, press the spacebar as quickly as possible *NEWLINE* \u0009\u2022 type in the first missing letter from the word fragment *NEWLINE* \u0009\u2022 type 'Y' or 'N' on the keyboard in response to the comprehension question *NEWLINE* *NEWLINE* Be as fast and accurate as you possibly can.",
+                    'instruction': "Press the spacebar to continue."
+                }
+            ],
+            pres = [
+                ...preamble.slice(0,preamble.length-1), // add in the instructions prior to the practice trials
+                {
+                    'text': "[Practice trial to go here //***]",
+                    'instruction': "",
+                    'vals': {
+                        'scenarioAnswer': null,
+                        'comprehension': {
+                            'text': "[Test text for practice trial //***]",
+                            'answer': null
+                        }
+                    }
+                },
+                preamble[preamble.length-1], // add in the final instruction following the practice trials
+                {
+                    'text': "You asked a lot of questions during lecture because you didn’t understand the subject and tried to grasp it. The other students seemed to find it difficult too. They listened with app_____tion to all your questions.",
+                    'instruction': "",
+                    'vals': {
+                        'scenarioAnswer': null,
+                        'comprehension': {
+                            'text': "Did the other students find you annoying?",
+                            'answer': null
+                        }
+                    }
+                },
+                {
+                    'text': "You are working on an assignment with some other people at your house. You turn on your favourite music and based on their reactions, you understand that they l_ke your choice of music.",
+                    'instruction': "",
+                    'vals': {
+                        'scenarioAnswer': null,
+                        'comprehension': {
+                            'text': "Did your friends approve of your choice of music?",
+                            'answer': null
+                        }
+                    }
+                },
+                {
+                    'text': "You arrange to meet a friend in town. Last time you met, you had an argument and parted on bad terms. Just before you leave, she phones to say that she can't make it. You think that this is because she is feeling u_well.",
+                    'instruction': "",
+                    'vals': {
+                        'scenarioAnswer': null,
+                        'comprehension': {
+                            'text': "Did your friend not come to dinner because she was angry at you?",
+                            'answer': null
+                        }
+                    }
+                },
+                {
+                    'text': "Your partner asks you to go to an anniversary dinner that their company is holding. You have not met any of their work colleagues before. Getting ready to go, you think that the new people you will meet will find you fri_nd_y.",
+                    'instruction': "",
+                    'vals': {
+                        'scenarioAnswer': null,
+                        'comprehension': {
+                            'text': "Did your partners work colleagues like you?",
+                            'answer': null
+                        }
+                    }
+                },
+                {
+                    'text': "You’ve been working for the same company for a number of years. Your boss asks you to give a speech at an upcoming conference and you agree to do it. On the day, you walk up to the podium and you are very stea_y.",
+                    'instruction': "",
+                    'vals': {
+                        'scenarioAnswer': null,
+                        'comprehension': {
+                            'text': "Did you look shaky during the presentation? ",
+                            'answer': null
+                        }
+                    }
+                }
+            ],
+            comprehensionInstruction = "Press 'Y' or 'N'.",
+            letterInputFlag = false,
+            comprehensionFlag = false,
+            anxPanelDrawn = false,
+            score = []; //*** populate with timing and correctness
+        
+        var keyPress;
+        //*** that's the end of variables for the anx stuff
+       
+        instruct('Press the spacebar to continue.', "THIS IS A DEMO OF THE BRAIN TRAINING PROGRAM. It is shorter in length than the real intervention but will give you a taste of the program components.") // add something about any key fullscreening?
+
+        // Fire fullscreen and hide cursor requests on spacebar
+        addEventListener('keyup', function(event) {
+            //removeEventListener('keypress');
+            // Fullscreen request
+            var el = document.documentElement,
+                rfs = el.requestFullscreen ||
+                el.webkitRequestFullScreen ||
+                el.mozRequestFullScreen ||
+                el.msRequestFullscreen;
+
+            // Call fullscreen
+            rfs.call(el);
+           
+            console.log("preambleDone", preambleDone);
+           
+            //*** clean up this stuff, should be nested if
+            if (!preambleDone && event.which === 32) {
+                $('.preambleText').remove();
+                $('.pres').remove();
+               
+                instruct('Press the spacebar to continue.',
+                         getPreambleText(),
+                         preambleX,
+                         preambleY);
+               
+                switch (preambleIndx) {
+                    case 1:
+                        preambleY = windowHeight*0.75;
+                        break;
+                    case 2:
+                        assignDims(0, 0.25);
+                        drawFigure(true);
+                        break;
+                    case 3:
+                        assignDims(1, 0.25);
+                        drawFigure(true);
+                        preambleY = windowHeight/2;
+                        break;
+                    case 4:
+                        preambleDone= true;
+                        assignDims(imgList[imgIndx].stimOrient);
+                        break;
+                }
+               
+                preambleIndx++;
+            }
+           
+            if (preambleDone && !alreadyFired && event.which === 32) { // 32===spacebar
+                $('.preambleText').remove();
+                $('.pres').remove();
+               
+                // Hide cursor
+                document.body.style.cursor = 'none';
+
+                // Plot framed image
+                drawFigure();
+
+                // Attach `handler` to the mousemove event of the document
+                $(document).on('mousemove', handler);
+
+                // Prevent this if block being rerun
+                alreadyFired = true;
+            }
+            
+            if (completedCBM) {
+                keyPress = event.which;
+                
+                console.log(keyPress);
+                
+                if (!anxPanelDrawn) {
+                    $('#panel').remove();
+                
+                    drawAnxSvg();
+
+                    instructAnx(pres[indx].instruction, pres[indx].text);
+                    
+                    anxPanelDrawn = true;
+                }
+                        
+                if (keyPress === 32 && (indx === preamble.length || indx < preamble.length-1)) { // 32===spacebar; true iff is an instruction
+                    console.log('spacebar; instruction');//***
+                    indx++;
+                    $('.presText').remove();
+                    instructAnx(pres[indx].instruction, pres[indx].text);
+                } else if (keyPress === 46 && indx < preamble.length-1) { // 46===delete; true iff is an instruction prior to the practice trials
+                    console.log('delete; instruction');//***
+                    indx--;
+                    $('.presText').remove();
+                    instructAnx(pres[indx].instruction, pres[indx].text);
+                } else if (keyPress === 32 && !(letterInputFlag) && !(comprehensionFlag)) { // true iff a trial & not letter input | a comprehension question
+                    console.log('spacebar; trial');//***
+                    d3.select('.presInstruct')
+                        .text('Please enter the first missing letter from the word fragment.')
+                        .style('fill', 'red');
+                    letterInputFlag = true;
+                } else if (keyPress >= 65 && keyPress <= 90 && letterInputFlag && !(comprehensionFlag)) { // true iff a trial & a letter input
+                    console.log('letter; trial');//***
+                    $('.presText').remove();
+                    instructAnx(comprehensionInstruction, pres[indx].vals.comprehension.text, 'red');
+                    letterInputFlag = false;
+                    comprehensionFlag = true;
+                } else if ([78,89].includes(keyPress) && comprehensionFlag) { // 78===n; 89===y; true iff a trial & comprehension question
+                    console.log('y|n; trial');//***
+                    comprehensionFlag = false;
+                    indx++;
+
+                    if (indx === pres.length) {
+                        $('.presText').remove();
+                        instructAnx(null, "You're all done.");
+                    } else {
+                        $('.presText').remove();
+                        instructAnx(pres[indx].instruction, pres[indx].text);
+                    }
+                }
+            }
+        })
+    </script>
+</body>
+</html>
